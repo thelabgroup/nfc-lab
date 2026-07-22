@@ -1,0 +1,92 @@
+# Overrides the Caddyfile that Railpack generates for static sites.
+# Based on Railpack's default staticfile template, with a cache policy added.
+# Railpack copies the repo to /app and serves it with Caddy on $PORT.
+{
+	admin off
+	persist_config off
+	auto_https off
+
+	log {
+		format json
+	}
+
+	servers {
+		trusted_proxies static private_ranges
+	}
+}
+
+:{$PORT:80} {
+	log {
+		format json
+	}
+
+	respond /health 200
+
+	# Security headers. The CSP is deliberately permissive: the site pulls
+	# scripts, fonts and styles from jsdelivr, Google Fonts/Tag Manager,
+	# Crisp chat and the Webflow CDN, and Crisp opens a wss: connection.
+	header {
+		# Enable cross-site filter (XSS) and tell browsers to block detected attacks
+		X-XSS-Protection "1; mode=block"
+		# Prevent some browsers from MIME-sniffing a response away from the declared Content-Type
+		X-Content-Type-Options "nosniff"
+		# Keep referrer data off of HTTP connections
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# Enable strict Content Security Policy
+		Content-Security-Policy "default-src 'self'; img-src 'self' data: https: *; style-src 'self' 'unsafe-inline' https: *; script-src 'self' 'unsafe-inline' https: *; font-src 'self' data: https: *; connect-src 'self' https: *; media-src 'self' https: *; object-src 'none'; frame-src 'self' https: *;"
+		# Remove Server header
+		-Server
+	}
+
+	# Cache policy. Webflow exports are NOT content-hashed - a re-export reuses
+	# the same filenames - so only fonts are safe to treat as immutable.
+	# Everything else trades a shorter TTL for updates that actually reach
+	# visitors. These four matchers are mutually exclusive on purpose: Caddy
+	# does not apply `header` directives in Caddyfile order, so overlapping
+	# rules would let whichever runs last silently win.
+	@fonts path /fonts/*
+	@images path /images/*
+	@assets path /css/* /js/*
+	@pages not path /fonts/* /images/* /css/* /js/*
+
+	header @fonts Cache-Control "public, max-age=31536000, immutable"
+	header @images Cache-Control "public, max-age=604800"
+	header @assets Cache-Control "public, max-age=3600, must-revalidate"
+	# Pages revalidate every request. Caddy answers with a cheap 304 via
+	# ETag/Last-Modified, so a re-export goes live immediately.
+	header @pages Cache-Control "no-cache"
+
+	root * /app
+
+	# Never serve repo/config files. Railway's GitHub checkout does not copy
+	# .git into /app, but `railway up` from a local directory tarballs the
+	# whole CWD - this keeps that from leaking. file_server's `hide` only
+	# matches the entry itself, not paths beneath it, hence the explicit
+	# /.git/* glob and the `error` (which routes through handle_errors below).
+	@denied path /.git /.git/* /.env /.env.* /Caddyfile /Staticfile /.gitignore
+	error @denied 404
+
+	# Handle static files
+	file_server {
+		hide .git
+		hide .env*
+		hide Caddyfile
+	}
+
+	# Compression with more formats
+	encode {
+		gzip
+		zstd
+	}
+
+	# Try files with HTML extension, so /solutions/pubs resolves to
+	# /solutions/pubs.html. No SPA index fallback - this is a multi-page site
+	# and unmatched paths should 404, not silently render the homepage.
+	try_files {path} {path}.html {path}/index.html
+
+	# Serves the exported 404.html / 401.html for those status codes.
+	handle_errors {
+		rewrite * /{err.status_code}.html
+		file_server
+	}
+}
