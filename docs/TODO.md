@@ -59,6 +59,30 @@ index a broken one-page site on the primary domain:
 - [ ] Update any absolute URLs / canonical tags in the export if the chosen
       hostname differs from what Webflow emitted.
 
+## Finish the navigation fix
+
+The dead navigation was patched directly in the export on branch
+`fix/image-404-filename-spaces` — carousel links, a new "Ordering products"
+section, the `solutions/*` and `product/*` "Contact sales" buttons and the
+cookie-banner privacy link (full detail in the caveat under
+[Attach a custom domain](#attach-a-custom-domain-eg-nfclabco) above). That took
+homepage-reachable pages from 5 to 20 and cut the orphan set from 25 to 14. Two
+threads are still open:
+
+- [ ] **Decide whether to surface the 6 remaining venue pages.**
+      `solutions/airports`, `bars-clubs`, `cafes`, `entertainment`, `pubs` and
+      `rentals` exist and are complete (verified real content, ~1,530 words each,
+      not drafts) but are linked from nothing. The homepage carousel lists 5 of
+      the 11 venues; extend it to all 11 — or add a venues hub / mega-menu
+      section — to wire them in. Icons and copy are already on disk, so this is a
+      design/IA call, not new build work.
+- [ ] **Move the fix into Webflow (the durable version).** Every link above is a
+      post-export edit, and **a Webflow re-export silently reverts all of it** —
+      the same failure mode as the forms, company and search work. Either
+      re-apply the edits after each re-export, or fix the nav in the Webflow
+      project and drop the stopgap. Doing this is what unblocks the "Fix
+      navigation in Webflow and re-export" checkbox in the domain section above.
+
 ## Populate the company/ pages (blog + newsroom)
 
 The four `company/*` pages shipped empty from Webflow — `blog.html`, `blog1.html`,
