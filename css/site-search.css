@@ -1,0 +1,127 @@
+/*
+ * Search results list rendered by js/site-search.js.
+ *
+ * Webflow exports no markup for search results, so there are no template
+ * classes to reuse here. These styles are written against the site's own
+ * custom properties (see :root in nfclabtlg.webflow.css) with literal
+ * fallbacks, so the list still looks right if that file is ever swapped out.
+ */
+
+.site-search-results {
+  margin-top: 40px;
+  font-family: Inter, -apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif;
+}
+
+.site-search-status {
+  color: var(--callout, #8a8a8e);
+  letter-spacing: -0.01em;
+  margin: 0 0 20px;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.site-search-status strong {
+  color: var(--black, #1d1d1f);
+  font-weight: 600;
+}
+
+.site-search-list {
+  grid-row-gap: 12px;
+  grid-template-columns: 1fr;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+}
+
+.site-search-item {
+  margin: 0;
+}
+
+.site-search-link {
+  background-color: var(--white, #fff);
+  border: 1px solid var(--black-border, #86868b26);
+  border-radius: 12px;
+  padding: 20px 24px;
+  color: var(--black, #1d1d1f);
+  text-decoration: none;
+  display: block;
+  transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
+}
+
+.site-search-link:hover,
+.site-search-link:focus-visible {
+  border-color: #86868b66;
+  box-shadow: 0 6px 20px #1d1d1f14;
+  transform: translateY(-1px);
+}
+
+.site-search-link:focus-visible {
+  outline: 2px solid var(--blue, #007aff);
+  outline-offset: 2px;
+}
+
+.site-search-title {
+  letter-spacing: -0.02em;
+  font-family: Questrial, sans-serif;
+  font-size: 22px;
+  line-height: 1.25;
+  display: block;
+}
+
+.site-search-url {
+  color: var(--callout, #8a8a8e);
+  margin-top: 4px;
+  font-size: 13px;
+  line-height: 1.4;
+  word-break: break-word;
+  display: block;
+}
+
+.site-search-snippet {
+  color: #4a4a4f;
+  margin-top: 10px;
+  font-size: 15px;
+  line-height: 1.55;
+  display: block;
+}
+
+.site-search-snippet mark {
+  background-color: #ffd01e59;
+  border-radius: 3px;
+  padding: 0 2px;
+  color: inherit;
+}
+
+/* The title is already prominent, so a matched word is bolded rather than
+   highlighted - a row of yellow blocks in the heading reads as noise. */
+.site-search-title mark {
+  background-color: #0000;
+  color: inherit;
+  font-weight: 700;
+}
+
+@media screen and (max-width: 767px) {
+  .site-search-results {
+    margin-top: 28px;
+  }
+
+  .site-search-link {
+    padding: 16px 18px;
+  }
+
+  .site-search-title {
+    font-size: 19px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .site-search-link {
+    transition: none;
+  }
+
+  .site-search-link:hover,
+  .site-search-link:focus-visible {
+    transform: none;
+  }
+}
