@@ -59,6 +59,43 @@ index a broken one-page site on the primary domain:
 - [ ] Update any absolute URLs / canonical tags in the export if the chosen
       hostname differs from what Webflow emitted.
 
+## Populate the company/ pages (blog + newsroom)
+
+The four `company/*` pages shipped empty from Webflow — `blog.html`, `blog1.html`,
+`newsroom.html` and `blog-section.html` each had a `<body>` of nothing but script
+tags. The same pages are empty on the live site (`nfclab.com/company/blog` etc.),
+so nothing was lost in the CMS import; they were never populated in Webflow. They
+have now been built from the `solutions/pubs.html` chassis (identical nav, footer,
+cookie banner, scripts) using the blog/news classes that already exist unused in
+`nfclabtlg.webflow.css` (`.blog-post-item`, `.news-item-big`, `.post-detail-heading`,
+`.date-news-wrapper`, `.category-news-*`). Nav wiring: Company → Newsroom now points
+at the real page and a new **Blog** entry sits beside it, in both the mega-menu and
+footer, across all 20 pages. `tools/build-search-index.js` was re-run so the new
+content is searchable (`blog-section.html` excluded via its `noindex`).
+
+**Deliberate choice — the newsroom ships no invented announcements.** Dated press
+releases are records of things that actually happened; fabricating them would put
+false announcements on the site under NFC Lab's name. So `newsroom.html` renders a
+real "No announcements just yet" empty state, with a fully-formed announcement card
+sitting commented-out directly beneath it plus swap-over instructions. The page is
+publishable today with nothing invented in it. The blog is different: its articles
+are genuine NFC explainers (static vs dynamic, NDEF, NTAG memory sizes, encryption,
+NFC vs QR, multi-site rollout) and are real content — but their **dates and read
+times are editorial placeholders**.
+
+- [ ] Replace the blog post dates and read times with real values before publishing
+      (search the pages for `date=`/`read=` origins in the copy, or edit the emitted
+      HTML directly).
+- [ ] When a real announcement exists, populate `newsroom.html`: delete the
+      `.post-empty-state` block and uncomment the `.post-grid` card template beneath
+      it (one `.blog-post-item` per release). Do not backfill invented ones.
+- [ ] Decide whether the new **Blog** nav/footer item stays; if not, remove it from
+      the mega-menu and footer (added across 20 pages alongside the Newsroom link).
+- [ ] **A Webflow re-export will silently revert all of this** — the pages, the nav
+      wiring and the search index — exactly like the forms, search and nav-stopgap
+      work above. The durable fix belongs in Webflow (populate the CMS / fix the
+      nav there); until then, re-apply after every re-export.
+
 ## Finish wiring up the forms service
 
 Every form on the site now posts to a `forms` service (`api/`), taken over from
@@ -91,3 +128,32 @@ submission is logged but no email is sent, and the visitor is told to email
 - [ ] Submit each of the three live forms in production and confirm the email
       arrives: contact (`support/contact-2`), pricing quote (`pricing/pricing-1`),
       site plan (`pricing/pricing`).
+
+## Site search — considerations
+
+Webflow's search is server-rendered; the export shipped the form but no backend,
+so every query came back empty. Search now runs in the browser against a
+prebuilt index (`js/site-search.js`, `tools/build-search-index.js`,
+`search-index.json`). Three things to keep in mind:
+
+- **A re-export silently breaks it, in two ways.** Like the forms and nav work,
+  a Webflow re-export overwrites `search.html` and drops the two lines that load
+  the search — the page still renders, it just returns nothing. Re-add the
+  `css/site-search.css` `<link>` and the `js/site-search.js` `<script>` (see the
+  README's Site search section). Separately, the index is a build artefact: it
+  does not regenerate itself, so **re-run `node tools/build-search-index.js` and
+  commit the result after any content change**, or results describe the previous
+  version of the site.
+
+- **Nothing links to `/search`.** The search form only exists on the search page
+  itself, so the page is reachable only by typing the URL. Adding an entry point
+  (a header/nav search affordance) is a design decision that has not been made —
+  decide whether search should be discoverable before launch, or leave it as a
+  deep link on purpose.
+
+- **The index is fetched behind the auth gate, and the builder is hidden.** The
+  browser fetches `search-index.json` same-origin with credentials, so it works
+  through the site's HTTP basic auth; `/tools` is denied in the Caddyfile so the
+  build script is never served publicly. If the basic-auth gate is removed at
+  launch, re-confirm the fetch still resolves, and keep the `/tools` denial in
+  place through any Caddyfile restructure.
