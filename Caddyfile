@@ -15,16 +15,17 @@
 	}
 }
 
-:{$PORT:80} {
-	log {
-		format json
-	}
-
-	respond /health 200
-
-	# Security headers. The CSP is deliberately permissive: the site pulls
-	# scripts, fonts and styles from jsdelivr, Google Fonts/Tag Manager,
-	# Crisp chat and the Webflow CDN, and Crisp opens a wss: connection.
+# Security headers. The CSP is deliberately permissive: the site pulls
+# scripts, fonts and styles from jsdelivr, Google Fonts/Tag Manager,
+# Crisp chat and the Webflow CDN, and Crisp opens a wss: connection.
+#
+# A snippet, not an inline block, because it has to be imported into
+# handle_errors as well. A `header` block containing a delete (-Server) is
+# applied by a response-writer wrapper at write time, and error responses
+# never pass back through that wrapper - so without the second import the
+# 401 page, which is what every unauthenticated visitor sees first, would
+# be served with no CSP and a Server header.
+(security_headers) {
 	header {
 		# Enable cross-site filter (XSS) and tell browsers to block detected attacks
 		X-XSS-Protection "1; mode=block"
@@ -37,41 +38,42 @@
 		# Remove Server header
 		-Server
 	}
+}
 
-	# Cache policy. Webflow exports are NOT content-hashed - a re-export reuses
-	# the same filenames - so only fonts are safe to treat as immutable.
-	# Everything else trades a shorter TTL for updates that actually reach
-	# visitors. These four matchers are mutually exclusive on purpose: Caddy
-	# does not apply `header` directives in Caddyfile order, so overlapping
-	# rules would let whichever runs last silently win.
-	@fonts path /fonts/*
-	@images path /images/*
-	@assets path /css/* /js/*
-	@pages not path /fonts/* /images/* /css/* /js/*
-
-	header @fonts Cache-Control "public, max-age=31536000, immutable"
-	header @images Cache-Control "public, max-age=604800"
-	header @assets Cache-Control "public, max-age=3600, must-revalidate"
-	# Pages revalidate every request. Caddy answers with a cheap 304 via
-	# ETag/Last-Modified, so a re-export goes live immediately.
-	header @pages Cache-Control "no-cache"
-
-	root * /app
-
-	# Never serve repo/config files. Railway's GitHub checkout does not copy
-	# .git into /app, but `railway up` from a local directory tarballs the
-	# whole CWD - this keeps that from leaking. file_server's `hide` only
-	# matches the entry itself, not paths beneath it, hence the explicit
-	# /.git/* glob and the `error` (which routes through handle_errors below).
-	@denied path /.git /.git/* /.env /.env.* /Caddyfile /Staticfile /.gitignore
-	error @denied 404
-
-	# Handle static files
-	file_server {
-		hide .git
-		hide .env*
-		hide Caddyfile
+:{$PORT:80} {
+	log {
+		format json
 	}
+
+	# Left unauthenticated on purpose - Railway's healthcheck runs before the
+	# deploy is promoted and has no credentials to offer.
+	#
+	# A `handle`, not a bare `respond`: Caddy sorts `respond` AFTER `handle`,
+	# so once the static branch below exists as a catch-all `handle`, a
+	# top-level `respond /health` would never be reached.
+	handle /health {
+		respond 200
+	}
+
+	# Password protection. The Webflow export ships a password page (401.html)
+	# whose form posts to /.wf_auth, an endpoint that only exists on Webflow's
+	# own hosting - self-hosted, nothing enforced the gate and the whole site
+	# was public. HTTP basic auth restores it: the browser's native credential
+	# prompt stands in for the exported form, and 401.html becomes the body
+	# handle_errors serves to anyone who dismisses that prompt.
+	#
+	# Credentials come from Railway service variables so no hash is committed:
+	#   SITE_USER          - username, defaults to "nfclab"
+	#   SITE_PASSWORD_HASH - bcrypt hash, from `caddy hash-password`
+	# SITE_PASSWORD_HASH deliberately has no default. Unset, Caddy rejects this
+	# config and the deploy fails, which is the outcome you want - the failure
+	# mode of a default would be the site quietly going public again.
+	@protected not path /health
+	basic_auth @protected {
+		{$SITE_USER:nfclab} {$SITE_PASSWORD_HASH}
+	}
+
+	import security_headers
 
 	# Compression with more formats
 	encode {
@@ -79,13 +81,80 @@
 		zstd
 	}
 
-	# Try files with HTML extension, so /solutions/pubs resolves to
-	# /solutions/pubs.html. No SPA index fallback - this is a multi-page site
-	# and unmatched paths should 404, not silently render the homepage.
-	try_files {path} {path}.html {path}/index.html
+	# Form submissions. The Webflow export posts every form to Webflow's own
+	# form API, which only accepts submissions from Webflow-hosted domains, so
+	# self-hosted every form silently failed. The `forms` service handles them
+	# instead; proxying rather than calling it cross-origin keeps submissions
+	# same-origin, so there is no CORS preflight and no third domain to certify.
+	#
+	# Upstream is Railway's private network, which resolves service names to
+	# IPv6 on older environments - the service binds :: to match. Override with
+	# FORMS_UPSTREAM to point at a local server while developing.
+	#
+	# This sits INSIDE basic auth on purpose: everyone who can see a form has
+	# already authenticated, so gating the endpoint costs nothing and keeps
+	# drive-by spam off it entirely.
+	handle /api/* {
+		reverse_proxy {$FORMS_UPSTREAM:forms.railway.internal:3000}
+	}
+
+	# Everything else is the static site. Wrapped in a catch-all `handle` so
+	# that `try_files` cannot reach /api/* - it sorts BEFORE `handle` in Caddy's
+	# directive order, and with no matching file it rewrites to the last
+	# candidate, which would turn POST /api/forms/contact into a request for
+	# /api/forms/contact/index.html before the proxy ever saw it.
+	handle {
+		# Cache policy. Webflow exports are NOT content-hashed - a re-export
+		# reuses the same filenames - so only fonts are safe to treat as
+		# immutable. Everything else trades a shorter TTL for updates that
+		# actually reach visitors. These four matchers are mutually exclusive on
+		# purpose: Caddy does not apply `header` directives in Caddyfile order,
+		# so overlapping rules would let whichever runs last silently win.
+		#
+		# Scoped to this block so API responses keep the Cache-Control the
+		# service sets on them rather than getting a second, conflicting one.
+		@fonts path /fonts/*
+		@images path /images/*
+		@assets path /css/* /js/*
+		@pages not path /fonts/* /images/* /css/* /js/*
+
+		header @fonts Cache-Control "public, max-age=31536000, immutable"
+		header @images Cache-Control "public, max-age=604800"
+		header @assets Cache-Control "public, max-age=3600, must-revalidate"
+		# Pages revalidate every request. Caddy answers with a cheap 304 via
+		# ETag/Last-Modified, so a re-export goes live immediately.
+		header @pages Cache-Control "no-cache"
+
+		root * /app
+
+		# Never serve repo/config files. Railway's GitHub checkout does not copy
+		# .git into /app, but `railway up` from a local directory tarballs the
+		# whole CWD - this keeps that from leaking. file_server's `hide` only
+		# matches the entry itself, not paths beneath it, hence the explicit
+		# /.git/* glob and the `error` (which routes through handle_errors below).
+		@denied path /.git /.git/* /.env /.env.* /Caddyfile /Staticfile /.gitignore /tools /tools/*
+		error @denied 404
+
+		# Handle static files
+		file_server {
+			hide .git
+			hide .env*
+			hide Caddyfile
+		}
+
+		# Try files with HTML extension, so /solutions/pubs resolves to
+		# /solutions/pubs.html. No SPA index fallback - this is a multi-page site
+		# and unmatched paths should 404, not silently render the homepage.
+		try_files {path} {path}.html {path}/index.html
+	}
 
 	# Serves the exported 404.html / 401.html for those status codes.
+	#
+	# Only Caddy-level errors land here, so a JSON 422/429 from a healthy forms
+	# service passes through untouched; an unreachable upstream becomes a 502
+	# and gets the HTML error page, which is the right response for that case.
 	handle_errors {
+		import security_headers
 		rewrite * /{err.status_code}.html
 		file_server
 	}
