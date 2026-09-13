@@ -6,6 +6,12 @@ The site currently serves from the generated Railway domain
 `https://web-production-0f605.up.railway.app`. That works, but the public site
 should launch on the real domain.
 
+**Out of date as of 11 September 2026:** the `web` service was parked along with
+the rest of the `nfc-lab` project — its deployment was removed — so that Railway
+URL now returns 404. The service, its variables and the repo link all survive;
+redeploying it is one click under Deployments. Nothing in this section can be
+tested until it is back up.
+
 Current setup: Railway project `nfc-lab`, service `web`, env `production`,
 building `thelabgroup/nfc-lab@main` with Railpack (static → Caddy), auto-deploy on push.
 
@@ -181,3 +187,83 @@ prebuilt index (`js/site-search.js`, `tools/build-search-index.js`,
   build script is never served publicly. If the basic-auth gate is removed at
   launch, re-confirm the fetch still resolves, and keep the `/tools` denial in
   place through any Caddyfile restructure.
+
+## The NFC tag service, its domains and what is left of AWS
+
+None of this is about the marketing site. It is the other half of NFC Lab: the
+SDM backend that every physical tag calls, the three domains, and the AWS account
+that used to host it. The authoritative procedure for bringing the tag service
+back lives in `RELAUNCH.md` in `thelabgroup/nfclab-sdm`; this is only the list of
+things still outstanding.
+
+State as of 12 September 2026: the SDM backend is rebuilt, validated on Railway
+and **deliberately parked** (deployments removed, variables intact) — the tags do
+not currently work and that is a decision, not a fault. All three domains moved
+from GoDaddy DNS to Cloudflare. The AWS account was emptied and **closed**.
+
+**Dated**
+- [ ] **Early October 2026** — AWS charges its final invoice (~$13 + VAT for
+      September) to the card on file. Once it shows as paid, the card can be
+      removed. The account can be reopened through AWS Support until roughly
+      11 December 2026, after which closure is permanent.
+- [ ] **Around mid-September 2026** — delete the `dc-aa8e722993._spfm` bridge TXT
+      records in Cloudflare on `nfclab.com` and `nfclab.co`. They exist only to
+      keep SPF resolving for resolvers still holding GoDaddy's old apex TXT
+      (TTL 3600); once that has aged out they are dead weight. GoDaddy's old
+      zones can be deleted at the same time — with AWS gone there is nothing left
+      to roll back to.
+- [ ] **Before February 2027** — find out whether `nfclab.co`'s GoDaddy-issued
+      certificate still renews now that DNS is hosted at Cloudflare. It expires
+      17 March 2027, and the site is GoDaddy Websites + Marketing (Duda), so
+      GoDaddy owns the TLS. If it will not renew, put the domain behind
+      Cloudflare's proxy so Cloudflare owns the certificate instead.
+- [ ] **Every year** — keep `nfclab.net` registered. The apex is encoded into
+      every physical tag. If it lapses and someone else registers it, they
+      receive every scan from every tag.
+
+**Logged in Menulab and deferred**
+- [ ] **Menulab ignores the SDM backend's replay verdict.** `/tagtt` returns
+      `{"status": 200|400}`, where 400 means "this scan is a replay";
+      `EncryptionController` assigns `$status` and never reads it, so a scan the
+      backend rejects is accepted anyway and the replay protection has no effect
+      on the product. Verified still present on `thelabgroup/menulab-3` at `caa60d7`
+      (12 September 2026, line 27). Raised as an issue with Menulab and deferred
+      there: it changes nothing while the tag service is parked. It has to land
+      before any relaunch, or the replay protection in the backend is decorative.
+      **A working fix already exists but was never pushed** — commit `2e9048a` on
+      branch `fix/nfc-honour-sdm-replay-verdict`, one controller and 10 tests,
+      sitting only in the local `_external/menulab-3` clone. `_external/` is
+      gitignored, so clearing that folder loses it. Push the branch if it should
+      outlive this laptop.
+
+**Standing risks — no action needed while the tag service is parked**
+- [ ] **The master key is committed in plain text** to `config.dist.py` in
+      `sagor110090/nfclab-python`, readable by three external contractor accounts
+      since December 2023, in the same repository as the tag UID list. Anyone
+      with that access can forge a valid scan for a real tag. Deleting the repo
+      would not undo it. The only real remedy is rotation, which means physically
+      re-encoding ~124 tags — worth doing only if the tags go live again, and
+      worth doing at the same time as `KEY_DIVERSIFICATION=standard`, since both
+      need the same re-encode. What is cheap now: have the repo transferred into
+      `thelabgroup`, or the collaborators removed, so the exposure stops widening.
+- [ ] **The key exists in exactly three places**, one of which is this laptop:
+      the `SDM_MASTER_KEY` variable on the parked Railway `sdm` service, the
+      contractor repo above, and `_external/nfclab-python/config.dist.py` on
+      disk. Lose all of them and every tag has to be re-encoded by hand. The
+      local copy is gitignored, so it cannot be committed by accident.
+- [ ] **Menulab's global subdomain cache key** — concurrent taps at different
+      venues can load each other's menu and pay each other's Stripe account. A
+      full write-up was handed to the Menulab team. Still unfixed: the
+      `cache()->put('subdomain', ...)` write is at line 45 on
+      `thelabgroup/menulab-3` at `caa60d7` (12 September 2026).
+
+**Housekeeping**
+- [ ] **`Desktop/development/nfclab-dns-migration/` is not in version control**
+      and exists only on this machine: the three zone files, the pre-migration
+      baselines recording exactly what GoDaddy served, `dump-zone.sh`, and
+      `verify-key.ps1` (checks a key against fingerprint `e0381ff21c277425`
+      without displaying it). If the rollback reference is worth keeping, commit
+      it somewhere.
+- [ ] **Offered and not taken:** enable DKIM on the domains that send mail, and
+      set `v=spf1 -all` with `p=reject` on the ones that do not, so they cannot
+      be spoofed.
