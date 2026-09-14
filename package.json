@@ -1,0 +1,17 @@
+{
+  "name": "nfc-lab-site",
+  "version": "1.0.0",
+  "private": true,
+  "description": "NFC Lab marketing site: Webflow export served from Cloudflare Workers static assets.",
+  "scripts": {
+    "build": "node tools/build-site.js",
+    "dev": "npm run build && wrangler dev",
+    "deploy": "npm run build && wrangler deploy",
+    "tail": "wrangler tail --format pretty",
+    "search-index": "node tools/build-search-index.js",
+    "test": "node worker/test/canonical.mjs && npm --prefix api test"
+  },
+  "devDependencies": {
+    "wrangler": "^4.42.0"
+  }
+}
