@@ -1,0 +1,41 @@
+{
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "nfc-lab",
+	"main": "worker/index.js",
+	"compatibility_date": "2026-09-14",
+
+	// The login has access to two accounts (thelabgroup and theoaks.uk), and
+	// without this wrangler refuses to guess in non-interactive use. Pinned
+	// rather than left to CLOUDFLARE_ACCOUNT_ID so a deploy cannot land in the
+	// wrong account. Account IDs are identifiers, not secrets.
+	"account_id": "8a9f8097ba4ff03c5a70f8b811c2902e",
+
+	"assets": {
+		// Built by tools/build-site.js, which copies the Webflow export out of
+		// the repo root and leaves behind everything that is not the site.
+		// Cloudflare uploads an asset directory wholesale, so this has to be a
+		// directory that holds the site and nothing else.
+		"directory": "./dist",
+		"binding": "ASSETS",
+
+		// Every request runs the Worker first. Without this the asset host
+		// answers static paths before the Worker is invoked, and the basic auth
+		// gate in worker/index.js would never see them - the site would be
+		// public.
+		"run_worker_first": true,
+
+		// Both off because the Worker does this itself: "none" makes
+		// env.ASSETS.fetch an exact-path lookup, which is what lets
+		// serveStatic() reproduce Caddy's try_files without the asset host also
+		// redirecting between /page and /page.html.
+		"html_handling": "none",
+		"not_found_handling": "none"
+	},
+
+	// Structured logs from worker/forms.js are the record of every submission,
+	// so they need to outlive the request. `wrangler tail` streams them live;
+	// the dashboard keeps them for the retention window.
+	"observability": {
+		"enabled": true
+	}
+}

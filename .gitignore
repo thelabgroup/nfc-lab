@@ -1,2 +1,11 @@
 # Local-only working copies of other repos - never committed here
 _external/
+
+# Tooling state
+node_modules/
+.wrangler/
+
+# Local wrangler secrets
+.dev.vars
+.dev.vars.*
+dist/

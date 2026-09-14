@@ -2,26 +2,30 @@
 
 ## Attach a custom domain (e.g. nfclab.co)
 
-The site currently serves from the generated Railway domain
-`https://web-production-0f605.up.railway.app`. That works, but the public site
+The site currently serves from the generated Workers domain
+`https://nfc-lab.dry-sky-b32b.workers.dev`. That works, but the public site
 should launch on the real domain.
 
-**Out of date as of 11 September 2026:** the `web` service was parked along with
-the rest of the `nfc-lab` project — its deployment was removed — so that Railway
-URL now returns 404. The service, its variables and the repo link all survive;
-redeploying it is one click under Deployments. Nothing in this section can be
-tested until it is back up.
+Current setup (as of 14 September 2026): Cloudflare Worker `nfc-lab` on the
+`thelabgroup` account, static assets from `dist/`, deployed with
+`npm run deploy`. Moved off Railway on this date — see
+[Hosting moved to Cloudflare](#hosting-moved-to-cloudflare-14-september-2026)
+below.
 
-Current setup: Railway project `nfc-lab`, service `web`, env `production`,
-building `thelabgroup/nfc-lab@main` with Railpack (static → Caddy), auto-deploy on push.
+**This is now much easier than it was on Railway.** All three domains already
+sit in the same Cloudflare account as the Worker, so attaching one is a Workers
+custom domain and Cloudflare writes the DNS record itself — no CNAME to copy
+across providers, no apex/CNAME-flattening problem, and the certificate is
+issued automatically.
 
 **Why it matters**
-- SEO: `*.up.railway.app` is on the Public Suffix List, so it accrues no domain
+- SEO: `*.workers.dev` is on the Public Suffix List, so it accrues no domain
   authority and is treated as a separate site from anything else we own.
 - The export already references `nfclab.co` 16 times; canonical tags and OG URLs
-  point at the real domain, so shares/crawlers resolve away from the Railway URL.
-- Trust: a Railway subdomain on a payments-adjacent marketing site reads as staging.
-- Portability: moving off Railway later breaks every inbound link to the subdomain.
+  point at the real domain, so shares/crawlers resolve away from the generated URL.
+- Trust: a `workers.dev` subdomain on a payments-adjacent marketing site reads as staging.
+- Portability: every inbound link to the generated subdomain breaks the day the
+  Worker is renamed or moved.
 
 **Blocked on** — do NOT attach the domain until these are done, or Google will
 index a broken one-page site on the primary domain:
@@ -55,15 +59,17 @@ index a broken one-page site on the primary domain:
 
 **Steps to attach (~2 min once unblocked)**
 - [ ] Decide the exact hostname (apex `nfclab.co`, `www`, or both with a redirect).
-- [ ] Generate the domain on the Railway `web` service (project `nfc-lab`,
-      env `production`) — `generate_domain` with the custom hostname, or the
-      dashboard. Requires a re-authenticated Railway session (MCP auth expired
-      during setup — re-auth with `railway login`).
-- [ ] Add the CNAME record Railway returns at the DNS provider. Apex domains need
-      a provider that supports CNAME flattening / ALIAS, or use `www` + redirect.
-- [ ] Wait for Railway to issue the TLS cert (automatic), then verify HTTPS resolves.
+- [ ] Add it to `wrangler.jsonc` as a route, or add a Custom Domain on the
+      `nfc-lab` Worker in the dashboard. Cloudflare creates the DNS record and
+      issues the certificate; nothing needs copying to a DNS provider because
+      the zones are already on this account.
+- [ ] Verify HTTPS resolves and that the password gate still answers `401`.
 - [ ] Update any absolute URLs / canonical tags in the export if the chosen
       hostname differs from what Webflow emitted.
+- [ ] Decide whether the basic auth gate comes off at launch. If it does,
+      revisit the two things that currently lean on it: the `/api/*` rate
+      limits (isolate-local, see the README) and the fact that
+      `search-index.json` is fetched with credentials.
 
 ## Finish the navigation fix
 
@@ -126,38 +132,53 @@ times are editorial placeholders**.
       work above. The durable fix belongs in Webflow (populate the CMS / fix the
       nav there); until then, re-apply after every re-export.
 
-## Finish wiring up the forms service
+## Finish wiring up the forms handler
 
-Every form on the site now posts to a `forms` service (`api/`), taken over from
-Webflow's dead form endpoint by `js/forms.js`. The code, the Caddy `/api/*`
-proxy and the tests are all in place and passing — but the service does not
-exist on Railway yet, so submissions have nowhere to land in production. See
-the [Forms section of the README](../README.md#forms) for the full context.
+Every form on the site posts to `/api/forms/<name>`, taken over from Webflow's
+dead form endpoint by `js/forms.js`. **The separate service this used to need is
+gone** — the handler moved into the site's own Worker on 14 September 2026, so
+`/api/*` is live wherever the site is, with no second deploy to create and no
+private-network hop. See the [Forms section of the README](../README.md#forms).
 
-**Blocked on** — until the service exists and has a Resend key, every
-submission is logged but no email is sent, and the visitor is told to email
-`hello@thelabgroup.com` directly:
-- [ ] Create the `forms` service in the `nfc-lab` project (env `production`)
-      from this repo, root directory `api/`. The name **must** be `forms` — it
-      is what `forms.railway.internal` in the Caddyfile resolves to. If named
-      otherwise, override `FORMS_UPSTREAM` on the `web` service to match.
-      (Needs a re-authenticated Railway session — MCP auth expired during setup,
-      re-auth with `railway login`.)
+**Blocked on** — until the Resend key is set, every submission is logged but no
+email is sent, and the visitor is told to email `hello@thelabgroup.com`
+directly:
 - [ ] Set `RESEND_API_KEY` and `FORM_FROM_EMAIL` (must be on a domain verified
-      in Resend) on the `forms` service. Optional: `FORM_TO_EMAIL` (defaults to
-      `hello@thelabgroup.com`), `FORM_WEBHOOK_URL`, `ALLOWED_ORIGINS`. Full
-      table in the README.
-- [ ] Redeploy `web` so it picks up the new Caddyfile (the `/api/*` proxy).
+      in Resend) on the `nfc-lab` Worker:
+      `npx wrangler secret put RESEND_API_KEY`. Optional: `FORM_TO_EMAIL`
+      (defaults to `hello@thelabgroup.com`), `FORM_WEBHOOK_URL`,
+      `ALLOWED_ORIGINS`. Full table in the README.
+- [ ] Confirm with `GET /api/health` that `emailConfigured` has flipped to
+      `true`.
 
 **Verify before trusting it**
-- [ ] `caddy validate --adapter caddyfile --config Caddyfile` — the Caddyfile
-      was restructured for the `/api/*` proxy but could not be validated during
-      setup (no local `caddy`/`docker`). Two directive-ordering rules matter;
-      see the README's config-changes section. Run once with
-      `PORT=8080 SITE_PASSWORD_HASH='<any bcrypt hash>'`.
 - [ ] Submit each of the three live forms in production and confirm the email
       arrives: contact (`support/contact-2`), pricing quote (`pricing/pricing-1`),
       site plan (`pricing/pricing`).
+
+## Hosting moved to Cloudflare (14 September 2026)
+
+The site moved off Railway and onto Cloudflare Workers static assets. What the
+move changed, for anyone reading older notes in this file:
+
+- **Serving.** `Caddyfile` is gone; [worker/index.js](../worker/index.js) does
+  what it did — basic auth, `/api/*`, `try_files`, the CSP and the cache
+  policy, the exported 401/404 pages.
+- **The password.** `SITE_PASSWORD_HASH` (bcrypt, Caddy-verified) does not
+  carry over. The Worker reads `SITE_PASSWORD`, or `SITE_PASSWORD_SHA256` if
+  you would rather not store it in clear. With neither set it answers `503`
+  rather than serving the site.
+- **The build.** Cloudflare uploads an asset directory wholesale, so
+  [tools/build-site.js](../tools/build-site.js) stages the site into `dist/`
+  first. Run `npm run deploy`; it builds, then deploys.
+- **Deploys are manual.** Railway auto-deployed on push to `main`; nothing
+  watches the repo now.
+
+- [ ] **Decide whether to reconnect auto-deploy on push.** Workers Builds can
+      watch `thelabgroup/nfc-lab@main` and run `npm run deploy`, restoring what
+      Railway did. Left off deliberately for now — a manual deploy is one
+      command and means a Webflow re-export cannot reach production before the
+      re-export checklist (forms, search, nav) has been re-applied.
 
 ## Site search — considerations
 
@@ -183,10 +204,11 @@ prebuilt index (`js/site-search.js`, `tools/build-search-index.js`,
 
 - **The index is fetched behind the auth gate, and the builder is hidden.** The
   browser fetches `search-index.json` same-origin with credentials, so it works
-  through the site's HTTP basic auth; `/tools` is denied in the Caddyfile so the
-  build script is never served publicly. If the basic-auth gate is removed at
-  launch, re-confirm the fetch still resolves, and keep the `/tools` denial in
-  place through any Caddyfile restructure.
+  through the site's HTTP basic auth. The build script is never served: `tools/`
+  is excluded from `dist/` by `tools/build-site.js` and denied a second time by
+  the `DENIED` list in `worker/index.js`. If the basic-auth gate is removed at
+  launch, re-confirm the fetch still resolves, and keep both locks in place
+  through any restructure.
 
 ## The NFC tag service, its domains and what is left of AWS
 
