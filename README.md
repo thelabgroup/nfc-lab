@@ -7,8 +7,31 @@ everything else in the repo root is exported output and gets overwritten by the
 next Webflow export.
 
 Form submissions are handled by the same Worker under `/api/*` — see
-[Forms](#forms) — so the site is a single origin with one deploy, one domain
-and one certificate.
+[Forms](#forms) — so the site is a single origin with one deploy.
+
+## Domains
+
+`nfclab.co` serves the site. Everything else 301s to it, path and query
+intact, so search engines index one copy and inbound links all land on one
+domain. `CANONICAL_HOST` in [wrangler.jsonc](wrangler.jsonc) names the winner;
+`worker/test/canonical.mjs` covers the behaviour, because `wrangler dev`
+proxies with its own Host header and cannot exercise it.
+
+| Hostname | |
+| --- | --- |
+| `nfclab.co` | serves the site |
+| `www.nfclab.co`, `nfclab.com`, `www.nfclab.com` | 301 to `nfclab.co` |
+| `nfc-lab.dry-sky-b32b.workers.dev` | serves directly — exempt, so the Worker stays reachable while a domain is being changed |
+
+**`nfclab.net` is deliberately not attached.** Its apex is encoded into every
+physical NFC tag, so pointing it here would put the marketing site in front of
+every scan once the SDM backend is unparked. See
+[docs/TODO.md](docs/TODO.md#the-nfc-tag-service-its-domains-and-what-is-left-of-aws).
+
+Adding a hostname means adding it to `routes` **and** to the redirect
+expectations in `worker/test/canonical.mjs`. Note that adding `routes` to the
+config disables `workers.dev` by default — `workers_dev: true` is set
+explicitly to stop that happening again.
 
 ## How a request is served
 
@@ -41,32 +64,44 @@ npm run tail           # stream production logs
 
 ## Password protection
 
-The site is behind HTTP basic auth. Webflow's own password protection does not
-survive an export — the exported `401.html` posts to `/.wf_auth`, an endpoint
-that only exists on Webflow's hosting — so the gate is enforced by the Worker
-instead. Visitors get the browser's native credential prompt, and `401.html` is
-served to anyone who dismisses it.
+**The site is public. The gate is off.** This section is how to put it back.
 
-Three Worker secrets drive it. Set one of the two password forms, not both:
+Webflow's own password protection does not survive an export — the exported
+`401.html` posts to `/.wf_auth`, an endpoint that only exists on Webflow's
+hosting — so while the site was being prepared the gate was enforced by the
+Worker instead: the browser's native credential prompt, with `401.html` served
+to anyone who dismissed it.
 
-| Secret | Required | Notes |
+What takes the gate off is `SITE_PUBLIC` in [wrangler.jsonc](wrangler.jsonc),
+and nothing else:
+
+| Name | Where | Notes |
 | --- | --- | --- |
-| `SITE_PASSWORD` | one of the two | the password itself |
-| `SITE_PASSWORD_SHA256` | one of the two | hex SHA-256 of the password, if you would rather not store it in clear |
-| `SITE_USER` | no | username, defaults to `nfclab` |
+| `SITE_PUBLIC` | `vars` | `"true"` serves the site to everyone. Any other value, including unset, keeps the gate |
+| `SITE_PASSWORD` | secret | the password itself |
+| `SITE_PASSWORD_SHA256` | secret | hex SHA-256 of the password, if you would rather not store it in clear |
+| `SITE_USER` | secret or var | username, defaults to `nfclab` |
 
-To set or change the password:
+To put the gate back, delete the `SITE_PUBLIC` line and redeploy. The
+`SITE_PASSWORD` secret is still set, so that is the whole procedure:
+
+```powershell
+npm run deploy
+```
+
+To change the password:
 
 ```powershell
 "the-new-password" | npx wrangler secret put SITE_PASSWORD
 ```
 
-Neither password secret has a default. **With both unset the Worker answers
-`503` to every request rather than serving the site** — the same reasoning as
-the old Caddy config refusing to start on a missing hash: failing loudly beats
-the site quietly going public. A Worker cannot fail its own deploy over a
-missing secret, so it fails closed at request time instead. Never commit either
-value.
+That switch is deliberately a committed var rather than the absence of a
+secret. Neither password secret has a default, so **with the gate on and no
+password set the Worker answers `503` to every request rather than serving the
+site** — the same reasoning as the old Caddy config refusing to start on a
+missing hash. If "no password" simply meant "public", a mislaid secret would
+silently publish the site; instead, publishing it is a line someone added in a
+diff. Never commit the password itself.
 
 Caddy verified a bcrypt hash, which is why the old `SITE_PASSWORD_HASH`
 variable does not carry over: Workers has no bcrypt, and running one per
@@ -130,12 +165,22 @@ validation spend the strict budget, so someone mistyping their email five times
 does not lock themselves out, while a bot hammering the endpoint still gets cut
 off.
 
-Both counters live in the isolate, so on Workers the effective limit multiplies
-by however many isolates Cloudflare has warm — a ceiling rather than an exact
-budget. That is acceptable while the endpoint sits behind the site's basic auth
-gate, which is where it is: everyone who can see a form has already
-authenticated. If the gate is ever removed at launch, move the counters into a
-Durable Object or Cloudflare's Rate Limiting binding.
+They are enforced by Cloudflare's Rate Limiting bindings (`FORM_BURST_LIMIT`,
+`FORM_SUBMIT_LIMIT` in [wrangler.jsonc](wrangler.jsonc)), which count per
+Cloudflare location rather than per isolate. That matters now that the site is
+public: the endpoint used to sit behind the password gate, where an
+isolate-local counter was defence in depth rather than the only thing between a
+bot and the inbox. The in-process counters are still there as the fallback for
+`api/server.js` and the tests, which drive them through `RATE_LIMIT_MAX`.
+
+The binding's period may only be 10 or 60 seconds, so the strict tier is now
+"5 per minute" rather than the old "5 per 10 minutes" — quicker to recover
+from, and still far below what makes a bot worth its time.
+
+Worth knowing: the honeypot and the sub-1.5s fill check are the only other
+spam defences, and both are trivial for a determined bot. If the forms start
+attracting junk now that they are public, Turnstile in front of
+`/api/forms/*` is the next step.
 
 Every submission is logged as structured JSON *before* delivery is attempted.
 If Resend is down, the lead is still recoverable from the service logs, and the

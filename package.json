@@ -9,7 +9,7 @@
     "deploy": "npm run build && wrangler deploy",
     "tail": "wrangler tail --format pretty",
     "search-index": "node tools/build-search-index.js",
-    "test": "npm --prefix api test"
+    "test": "node worker/test/canonical.mjs && npm --prefix api test"
   },
   "devDependencies": {
     "wrangler": "^4.42.0"

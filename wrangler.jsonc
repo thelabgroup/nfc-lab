@@ -10,6 +10,61 @@
 	// wrong account. Account IDs are identifiers, not secrets.
 	"account_id": "8a9f8097ba4ff03c5a70f8b811c2902e",
 
+	"vars": {
+		// The site is public. This is the ONLY thing that takes the password
+		// gate off - worker/index.js keeps it on for any other value, including
+		// unset, and answers 503 if the gate is on with no password configured.
+		// Deliberately a committed var rather than the absence of a secret, so
+		// publishing the site is a decision that shows up in a diff and a
+		// mislaid secret cannot publish it by accident. Delete this line and
+		// redeploy to put the gate back; the SITE_PASSWORD secret is still set.
+		"SITE_PUBLIC": "true",
+
+		// Four hostnames reach this Worker and only this one serves the site;
+		// the rest get a 301. nfclab.co wins because the export's own copy
+		// references it throughout.
+		"CANONICAL_HOST": "nfclab.co"
+	},
+
+	// Kept on deliberately. Adding `routes` disables workers.dev by default,
+	// which silently took the site's only URL offline mid-migration. It stays
+	// as the way to reach the Worker when a custom domain is being changed.
+	"workers_dev": true,
+	"preview_urls": true,
+
+	// Custom domains. Cloudflare writes the DNS records and issues the
+	// certificates; all of these zones are already on this account.
+	//
+	// nfclab.net is deliberately absent. Its apex is encoded into every
+	// physical NFC tag, so pointing it here would put the marketing site in
+	// front of every scan once the SDM backend is unparked. See docs/TODO.md.
+	"routes": [
+		{ "pattern": "nfclab.co", "custom_domain": true },
+		{ "pattern": "www.nfclab.co", "custom_domain": true },
+		{ "pattern": "nfclab.com", "custom_domain": true },
+		{ "pattern": "www.nfclab.com", "custom_domain": true }
+	],
+
+	// Rate limits for /api/*, counted per Cloudflare location rather than per
+	// isolate. They matter more than they used to: the endpoint used to sit
+	// behind the site's basic auth gate and now faces the internet.
+	//
+	// Two tiers on purpose - `burst` counts every request, `submit` only counts
+	// submissions that passed validation, so someone mistyping their email does
+	// not spend the strict budget. `period` may only be 10 or 60.
+	"ratelimits": [
+		{
+			"name": "FORM_BURST_LIMIT",
+			"namespace_id": "1001",
+			"simple": { "limit": 40, "period": 60 }
+		},
+		{
+			"name": "FORM_SUBMIT_LIMIT",
+			"namespace_id": "1002",
+			"simple": { "limit": 5, "period": 60 }
+		}
+	],
+
 	"assets": {
 		// Built by tools/build-site.js, which copies the Webflow export out of
 		// the repo root and leaves behind everything that is not the site.
@@ -19,9 +74,9 @@
 		"binding": "ASSETS",
 
 		// Every request runs the Worker first. Without this the asset host
-		// answers static paths before the Worker is invoked, and the basic auth
-		// gate in worker/index.js would never see them - the site would be
-		// public.
+		// answers static paths before the Worker is invoked - which would skip
+		// the canonical redirect, and would skip the auth gate if it is ever
+		// turned back on.
 		"run_worker_first": true,
 
 		// Both off because the Worker does this itself: "none" makes

@@ -162,19 +162,28 @@ async function readBody(request) {
 }
 
 // ---------------------------------------------------------------------------
-// Rate limiting (in-memory, per IP)
+// Rate limiting, per IP
 //
 // Two tiers, because they defend against different things:
 //   burst  — every request counts. Stops a bot hammering the endpoint.
 //   submit — only submissions that pass validation count. Keeps someone who
 //            mistypes their email a few times from locking themselves out.
 //
-// State lives in the isolate, so on Workers the effective limit multiplies by
-// however many isolates Cloudflare has warm — a ceiling rather than an exact
-// budget. Acceptable here because the endpoint sits behind the site's basic
-// auth gate, so this is defence in depth rather than the only thing between a
-// bot and the inbox. If that gate is ever removed, move the counters into a
-// Durable Object or Cloudflare's Rate Limiting binding.
+// Enforced by Cloudflare's Rate Limiting bindings (FORM_BURST_LIMIT and
+// FORM_SUBMIT_LIMIT in wrangler.jsonc) when they are present. They count per
+// Cloudflare location rather than per isolate, which is what this needs now
+// that the endpoint is public: it used to sit behind the site's basic auth
+// gate, where an isolate-local counter was defence in depth rather than the
+// only thing between a bot and the inbox.
+//
+// The in-memory counters below are the fallback for anything without those
+// bindings — api/server.js under node, and the test suite, which drives the
+// limits through RATE_LIMIT_MAX and friends.
+//
+// One difference worth knowing: the binding's period can only be 10 or 60
+// seconds, so the strict tier is now "5 per minute" rather than the old "5 per
+// 10 minutes". Faster to recover from, more forgiving of a real person who
+// submits twice, and still far below what a bot needs to be worth its time.
 // ---------------------------------------------------------------------------
 
 const hits = new Map()
@@ -190,8 +199,8 @@ function prune(cutoff) {
   }
 }
 
-/** Records a hit and reports whether the caller has now exceeded `max`. */
-function rateLimited(config, ip, tier, max) {
+/** Records a hit in the in-process counters and reports whether `max` is now exceeded. */
+function rateLimitedLocally(config, ip, tier, max) {
   const cutoff = Date.now() - config.rateLimitWindowMs
   if (hits.size > PRUNE_AT) prune(cutoff)
 
@@ -204,6 +213,24 @@ function rateLimited(config, ip, tier, max) {
   recent.push(Date.now())
   hits.set(key, recent)
   return false
+}
+
+/** Records a hit and reports whether the caller has now exceeded the tier's budget. */
+async function rateLimited(env, config, ip, tier, max) {
+  const limiter = tier === 'burst' ? env.FORM_BURST_LIMIT : env.FORM_SUBMIT_LIMIT
+
+  if (limiter && typeof limiter.limit === 'function') {
+    try {
+      const { success } = await limiter.limit({ key: ip })
+      return !success
+    } catch (err) {
+      // A limiter that errors must not take the form down with it. Fall
+      // through to the in-process counters rather than rejecting the lead.
+      log('warn', 'rate_limiter_failed', { tier, error: err.message })
+    }
+  }
+
+  return rateLimitedLocally(config, ip, tier, max)
 }
 
 // ---------------------------------------------------------------------------
@@ -418,7 +445,7 @@ function respondSuccess(config, submission, cors) {
   return submission.isAjax ? json(200, { ok: true }, cors) : redirect(config.successRedirect)
 }
 
-async function handleSubmission(request, config, formName) {
+async function handleSubmission(request, env, config, formName) {
   const cors = corsHeaders(config, request)
   const id = crypto.randomUUID()
   const receivedAt = new Date().toISOString()
@@ -435,7 +462,7 @@ async function handleSubmission(request, config, formName) {
     return json(403, { ok: false, error: 'Origin not allowed' }, cors)
   }
 
-  if (rateLimited(config, ip, 'burst', config.rateLimitBurstMax)) {
+  if (await rateLimited(env, config, ip, 'burst', config.rateLimitBurstMax)) {
     log('warn', 'rate_limited', { id, formName, ip, tier: 'burst' })
     return json(429, { ok: false, error: 'Too many requests. Please try again shortly.' }, cors)
   }
@@ -477,7 +504,7 @@ async function handleSubmission(request, config, formName) {
   }
 
   // Only now, with a well-formed submission in hand, spend the strict budget.
-  if (rateLimited(config, ip, 'submit', config.rateLimitMax)) {
+  if (await rateLimited(env, config, ip, 'submit', config.rateLimitMax)) {
     log('warn', 'rate_limited', { id, formName, ip, tier: 'submit' })
     return json(429, { ok: false, error: 'Too many submissions. Please try again shortly.' }, cors)
   }
@@ -558,7 +585,7 @@ export async function handleApiRequest(request, env = {}) {
       return json(405, { ok: false, error: 'Method not allowed' }, { Allow: 'POST' })
     }
     try {
-      return await handleSubmission(request, config, match[1])
+      return await handleSubmission(request, env, config, match[1])
     } catch (err) {
       const status = err.statusCode || 500
       log('error', 'unhandled', { path, error: err.message, stack: err.stack })

@@ -93,24 +93,69 @@ function isDenied(pathname) {
 }
 
 // ---------------------------------------------------------------------------
+// Canonical host
+//
+// Four hostnames point at this Worker and only one should serve the site; the
+// rest redirect, so search engines index one copy and inbound links all land
+// on the same domain. CANONICAL_HOST in wrangler.jsonc names the winner.
+//
+// nfclab.net is deliberately NOT among them: its apex is encoded into every
+// physical NFC tag, and claiming it here would put the marketing site in front
+// of every scan once the SDM backend comes back. See docs/TODO.md.
+// ---------------------------------------------------------------------------
+
+/**
+ * A 301 to the canonical host, or null if this request is already on it.
+ *
+ * Exported for worker/test/canonical.mjs. `wrangler dev` proxies requests to
+ * workerd with its own Host, so the hostname the Worker sees locally is always
+ * 127.0.0.1 and this branch cannot be exercised through the dev server.
+ */
+export function canonicalRedirect(url, env) {
+  const canonical = env.CANONICAL_HOST
+  if (!canonical || url.hostname === canonical) return null
+
+  // The generated workers.dev hostname and local dev keep serving directly, so
+  // the Worker can be exercised without a custom domain in front of it.
+  if (url.hostname.endsWith('.workers.dev')) return null
+  if (url.hostname === 'localhost' || url.hostname === '127.0.0.1') return null
+
+  const target = new URL(url)
+  target.protocol = 'https:'
+  target.hostname = canonical
+  target.port = ''
+  // 301, not 302: these hostnames are not coming back as separate sites, and a
+  // permanent redirect is what passes link equity to the canonical one.
+  return Response.redirect(target.toString(), 301)
+}
+
+// ---------------------------------------------------------------------------
 // Basic auth
 //
 // The Webflow export ships a password page (401.html) whose form posts to
 // /.wf_auth, an endpoint that only exists on Webflow's own hosting — self-
 // hosted, nothing enforced the gate and the whole site was public. HTTP basic
-// auth restores it: the browser's native credential prompt stands in for the
-// exported form, and 401.html is the body served to anyone who dismisses it.
+// auth restored it while the site was being prepared.
 //
-// Credentials come from Worker secrets, so no hash is committed:
+// The site is public now, so the gate is off — and it is off because
+// SITE_PUBLIC says so, not because a secret went missing:
+//
+//   SITE_PUBLIC           "true" serves the site to everyone. Anything else,
+//                         including unset, keeps the gate on.
 //   SITE_USER             username, defaults to "nfclab"
-//   SITE_PASSWORD_SHA256  hex SHA-256 of the password (preferred)
-//   SITE_PASSWORD         the password itself (fallback)
+//   SITE_PASSWORD_SHA256  hex SHA-256 of the password
+//   SITE_PASSWORD         the password itself
 //
-// Neither password variable has a default. With both unset the Worker answers
-// 503 rather than serving the site — the same reasoning as the Caddy config
-// refusing to start: a deploy that fails loudly beats a site that quietly goes
-// public. A Worker cannot fail its own deploy over a missing secret, so it
-// fails closed at request time instead.
+// That switch is the point of this shape. Neither password variable has a
+// default, so with the gate on and no password set the Worker answers 503
+// rather than serving the site — the same reasoning as the old Caddy config
+// refusing to start. If "no password" simply meant "public", losing a secret
+// would silently publish the site. Going public has to be something someone
+// wrote down, and SITE_PUBLIC lives in wrangler.jsonc where it shows up in a
+// diff and in code review.
+//
+// To put the gate back: delete SITE_PUBLIC from wrangler.jsonc and redeploy.
+// The SITE_PASSWORD secret is still set, so that is the whole procedure.
 //
 // Caddy verified a bcrypt hash. Workers has no bcrypt, and running one per
 // request would spend real CPU on every page load, so the stored form is a
@@ -153,6 +198,8 @@ function parseBasicAuth(header) {
 
 /** 'ok' | 'unauthorized' | 'unconfigured' */
 async function checkAuth(request, env) {
+  if (env.SITE_PUBLIC === 'true') return 'ok'
+
   const expectedHash = (env.SITE_PASSWORD_SHA256 || '').trim().toLowerCase()
   const plaintext = env.SITE_PASSWORD || ''
   if (!expectedHash && !plaintext) return 'unconfigured'
@@ -241,14 +288,18 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url)
 
-    // Unauthenticated on purpose, so an uptime check can reach it without
-    // credentials. Returns no site content.
+    // Answered on every hostname, before the canonical redirect, so an uptime
+    // check pointed at any of them gets a straight answer rather than a 301.
+    // Returns no site content.
     if (url.pathname === '/health') {
       return new Response('OK\n', {
         status: 200,
         headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' },
       })
     }
+
+    const redirect = canonicalRedirect(url, env)
+    if (redirect) return redirect
 
     const auth = await checkAuth(request, env)
 

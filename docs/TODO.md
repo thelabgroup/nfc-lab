@@ -1,22 +1,46 @@
 # TODO
 
-## Attach a custom domain (e.g. nfclab.co)
+## Attach the custom domains — blocked on one DNS step
 
-The site currently serves from the generated Workers domain
-`https://nfc-lab.dry-sky-b32b.workers.dev`. That works, but the public site
-should launch on the real domain.
+**The site went public on 14 September 2026.** The password gate is off
+(`SITE_PUBLIC` in `wrangler.jsonc`) and the site serves to anyone at
+`https://nfc-lab.dry-sky-b32b.workers.dev`.
 
-Current setup (as of 14 September 2026): Cloudflare Worker `nfc-lab` on the
-`thelabgroup` account, static assets from `dist/`, deployed with
-`npm run deploy`. Moved off Railway on this date — see
-[Hosting moved to Cloudflare](#hosting-moved-to-cloudflare-14-september-2026)
-below.
+Current setup: Cloudflare Worker `nfc-lab` on the `thelabgroup` account, static
+assets from `dist/`, deployed with `npm run deploy`. Moved off Railway on the
+same date — see
+[Hosting moved to Cloudflare](#hosting-moved-to-cloudflare-14-september-2026).
 
-**This is now much easier than it was on Railway.** All three domains already
-sit in the same Cloudflare account as the Worker, so attaching one is a Workers
-custom domain and Cloudflare writes the DNS record itself — no CNAME to copy
-across providers, no apex/CNAME-flattening problem, and the certificate is
-issued automatically.
+The four hostnames are declared in `wrangler.jsonc` and the redirect logic is
+written and tested, but **the custom domains are not attached yet**: Cloudflare
+refuses to create a Workers custom domain over a hostname that already has
+externally managed DNS records, and all four have them.
+
+- [ ] **Clear or replace the existing DNS records**, then `npm run deploy`.
+      Either delete them in the Cloudflare dashboard and redeploy, or use the
+      Worker's own **Add Custom Domain** flow, which offers to replace the
+      record for you. What is there now:
+
+      | Hostname | Record | Points at |
+      | --- | --- | --- |
+      | `nfclab.co` | A 13.248.243.5, A 76.223.105.230 | GoDaddy Websites + Marketing (Duda) |
+      | `www.nfclab.co` | CNAME nfclab.co | the same |
+      | `nfclab.com` | A 198.202.211.1 | redirects to www |
+      | `www.nfclab.com` | CNAME cdn.webflow.com | **the live Webflow site** |
+
+      Replacing `www.nfclab.com` is what takes the current public site off
+      Webflow and puts this export in its place.
+
+- [ ] After attaching, confirm each hostname: `nfclab.co` serves, the other
+      three 301 to it with the path intact, and TLS is valid on all four.
+
+Note the wrangler login only carries `zone:read`, so it cannot edit DNS — this
+step needs the dashboard or an API token with `Zone.DNS:Edit`.
+
+**One TODO this closes.** The question further down about whether `nfclab.co`'s
+GoDaddy-issued certificate still renews (expires 17 March 2027) goes away once
+Cloudflare serves the hostname: Cloudflare issues and renews the certificate
+itself.
 
 **Why it matters**
 - SEO: `*.workers.dev` is on the Public Suffix List, so it accrues no domain
@@ -27,8 +51,16 @@ issued automatically.
 - Portability: every inbound link to the generated subdomain breaks the day the
   Worker is renamed or moved.
 
-**Blocked on** — do NOT attach the domain until these are done, or Google will
-index a broken one-page site on the primary domain:
+**This was written as a blocker and has been overtaken.** It said: do NOT
+attach the domain until the navigation is fixed, or Google will index a broken
+one-page site on the primary domain. The site went public anyway on
+14 September 2026, as a deliberate call. The work below did not stop being
+necessary — it stopped being preventative and became urgent, because the
+crawler is now free to do exactly what this warned about. Two content items in
+particular are live to the public as they stand: the orphaned pages here, and
+the **placeholder blog dates** under
+[Populate the company/ pages](#populate-the-company-pages-blog--newsroom).
+
 - [ ] Fix navigation in Webflow and re-export. 647 internal links currently point
       at `index.html`; 25 pages (all of `product/` and `solutions/`, the `company/`
       blog pages, `search.html`) are orphaned — reachable by URL but linked from
