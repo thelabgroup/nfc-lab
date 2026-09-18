@@ -1,15 +1,17 @@
 /**
- * Checks the canonical-host redirect.
+ * Checks the canonical-host redirect and the noindex marking that goes with it.
  *
- * Four hostnames reach the Worker and only nfclab.co serves the site. This is
- * its own test because `wrangler dev` cannot exercise it: the dev server
- * proxies to workerd with its own Host header, so the hostname the Worker sees
- * locally is always 127.0.0.1, which is exempt by design.
+ * Four hostnames reach the Worker and only nfclab.co serves the site. Both
+ * behaviours need their own test because `wrangler dev` cannot exercise either:
+ * it reports the hostname as the first configured route, so every local request
+ * looks like it arrived on the canonical host and both branches are dead. A
+ * request sent to the dev server as bogus.example.com came back 200 and
+ * unmarked, which is exactly what a broken redirect would also look like.
  *
  * Run with: node worker/test/canonical.mjs
  */
 
-import { canonicalRedirect } from '../index.js'
+import { canonicalRedirect, shouldNoindex } from '../index.js'
 
 const env = { CANONICAL_HOST: 'nfclab.co' }
 
@@ -70,6 +72,32 @@ check('127.0.0.1 is exempt', () => serves('http://127.0.0.1:8787/solutions/pubs'
 check('no CANONICAL_HOST means no redirect', () => {
   const response = canonicalRedirect(new URL('https://nfclab.com/'), {})
   if (response) throw new Error('redirected with no CANONICAL_HOST set')
+})
+
+// --- noindex marking ---------------------------------------------------------
+//
+// The custom domains redirect and never serve, so in practice this is about
+// workers.dev: it is exempt from the redirect to stay usable, which leaves it
+// free to be indexed alongside nfclab.co and compete with it.
+
+function noindexed(url, expected) {
+  const actual = shouldNoindex(new URL(url), env)
+  if (actual !== expected) {
+    throw new Error(`expected shouldNoindex=${expected} for ${url}, got ${actual}`)
+  }
+}
+
+check('the canonical host is indexable', () => noindexed('https://nfclab.co/', false))
+check('workers.dev is marked noindex', () =>
+  noindexed('https://nfc-lab.dry-sky-b32b.workers.dev/', true))
+check('a preview URL is marked noindex', () =>
+  noindexed('https://abc123-nfc-lab.dry-sky-b32b.workers.dev/solutions/pubs', true))
+check('a non-canonical custom domain would be marked', () =>
+  noindexed('https://www.nfclab.com/', true))
+check('no CANONICAL_HOST means nothing is marked', () => {
+  if (shouldNoindex(new URL('https://nfclab.co/'), {})) {
+    throw new Error('marked noindex with no CANONICAL_HOST set')
+  }
 })
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed')

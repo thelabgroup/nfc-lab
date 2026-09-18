@@ -33,6 +33,42 @@ expectations in `worker/test/canonical.mjs`. Note that adding `routes` to the
 config disables `workers.dev` by default — `workers_dev: true` is set
 explicitly to stop that happening again.
 
+The generated `workers.dev` hostname is exempt from the redirect so the Worker
+stays reachable while a domain is being changed. That would leave it free to be
+indexed alongside `nfclab.co`, so the Worker sends `X-Robots-Tag: noindex` on
+any hostname that is not the canonical one.
+
+**Neither the redirect nor the noindex can be tested with `wrangler dev`.** It
+reports the hostname as the first configured route, so every local request
+looks like it arrived on the canonical host and both branches are dead. A
+request sent to the dev server as `bogus.example.com` comes back `200` and
+unmarked — indistinguishable from both features being broken. That is what
+`worker/test/canonical.mjs` is for; verify the real thing against the deployed
+hostnames.
+
+## Sitemap and robots.txt
+
+Webflow generated both on its own hosting and neither survives an export, so
+self-hosting lost them silently. [tools/build-site.js](tools/build-site.js)
+writes them into `dist/` on every build:
+
+- **`sitemap.xml`** lists every page except the error pages, the post-submit
+  confirmation, the search page and the template leftovers. `<lastmod>` comes
+  from each file's last commit date — the mtime in `dist/` is worthless, since
+  every file was copied moments earlier and would date the whole site to the
+  last deploy. Pages carrying their own `noindex` are skipped, because a
+  sitemap entry for a noindexed page is a contradiction crawlers report.
+- **`robots.txt`** allows everything except `/api/` and `/search.html`, and
+  points at the sitemap.
+
+Generated rather than committed on purpose. `search-index.json` is the
+cautionary tale: it is a committed artefact that has to be rebuilt by hand
+after every re-export, and forgetting leaves search describing the previous
+version of the site. These cannot drift that way.
+
+The canonical origin is read out of `wrangler.jsonc`, so `CANONICAL_HOST` and
+the URLs in the sitemap cannot disagree.
+
 ## How a request is served
 
 Cloudflare uploads an asset directory wholesale, so the deployable site is

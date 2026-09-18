@@ -105,11 +105,27 @@ function isDenied(pathname) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Whether a response served on this hostname should be marked noindex.
+ *
+ * Any hostname serving the site without being the canonical one is a duplicate
+ * as far as a crawler is concerned. The custom domains redirect and never get
+ * this far, so in practice this is the generated workers.dev hostname — exempt
+ * from the redirect so it stays usable, and therefore free to be indexed
+ * alongside nfclab.co and compete with it.
+ */
+export function shouldNoindex(url, env) {
+  return Boolean(env.CANONICAL_HOST) && url.hostname !== env.CANONICAL_HOST
+}
+
+/**
  * A 301 to the canonical host, or null if this request is already on it.
  *
- * Exported for worker/test/canonical.mjs. `wrangler dev` proxies requests to
- * workerd with its own Host, so the hostname the Worker sees locally is always
- * 127.0.0.1 and this branch cannot be exercised through the dev server.
+ * Exported, with shouldNoindex, for worker/test/canonical.mjs. Neither can be
+ * exercised through `wrangler dev`: it reports the hostname as the first
+ * configured route, so every request looks like it arrived on the canonical
+ * host and both branches are dead locally. Requests sent to the dev server as
+ * www.nfclab.com and as bogus.example.com both came back 200 and unmarked,
+ * which is what a working redirect and a working noindex would NOT do.
  */
 export function canonicalRedirect(url, env) {
   const canonical = env.CANONICAL_HOST
@@ -284,6 +300,40 @@ async function serveStatic(request, env, url) {
 // Entry point
 // ---------------------------------------------------------------------------
 
+/** Everything after the health check and the canonical redirect. */
+async function route(request, env, url) {
+  const auth = await checkAuth(request, env)
+
+    if (auth === 'unconfigured') {
+      console.log(
+        JSON.stringify({
+          level: 'error',
+          event: 'auth_unconfigured',
+          ts: new Date().toISOString(),
+          message:
+            'Neither SITE_PASSWORD_SHA256 nor SITE_PASSWORD is set — refusing to serve the site.',
+        }),
+      )
+      return errorPage(env, 503)
+    }
+
+  if (auth === 'unauthorized') {
+    return errorPage(env, 401, { 'WWW-Authenticate': 'Basic realm="restricted"' })
+  }
+
+  // Inside the gate on purpose: while the gate is on, everyone who can see a
+  // form has already authenticated, so gating the endpoint costs nothing and
+  // keeps drive-by spam off it entirely.
+  if (url.pathname === '/api' || url.pathname.startsWith('/api/')) {
+    const response = await handleApiRequest(request, env)
+    return withHeaders(response, SECURITY_HEADERS)
+  }
+
+  if (isDenied(url.pathname)) return errorPage(env, 404)
+
+  return serveStatic(request, env, url)
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url)
@@ -301,35 +351,14 @@ export default {
     const redirect = canonicalRedirect(url, env)
     if (redirect) return redirect
 
-    const auth = await checkAuth(request, env)
+    const response = await route(request, env, url)
 
-    if (auth === 'unconfigured') {
-      console.log(
-        JSON.stringify({
-          level: 'error',
-          event: 'auth_unconfigured',
-          ts: new Date().toISOString(),
-          message:
-            'Neither SITE_PASSWORD_SHA256 nor SITE_PASSWORD is set — refusing to serve the site.',
-        }),
-      )
-      return errorPage(env, 503)
+    if (shouldNoindex(url, env)) {
+      const marked = new Response(response.body, response)
+      marked.headers.set('X-Robots-Tag', 'noindex')
+      return marked
     }
 
-    if (auth === 'unauthorized') {
-      return errorPage(env, 401, { 'WWW-Authenticate': 'Basic realm="restricted"' })
-    }
-
-    // Inside the gate on purpose: everyone who can see a form has already
-    // authenticated, so gating the endpoint costs nothing and keeps drive-by
-    // spam off it entirely.
-    if (url.pathname === '/api' || url.pathname.startsWith('/api/')) {
-      const response = await handleApiRequest(request, env)
-      return withHeaders(response, SECURITY_HEADERS)
-    }
-
-    if (isDenied(url.pathname)) return errorPage(env, 404)
-
-    return serveStatic(request, env, url)
+    return response
   },
 }

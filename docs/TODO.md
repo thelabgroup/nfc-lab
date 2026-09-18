@@ -62,6 +62,13 @@ particular are live to the public as they stand: the orphaned pages here, and
 the **placeholder blog dates** under
 [Populate the company/ pages](#populate-the-company-pages-blog--newsroom).
 
+**Partly mitigated as of 18 September 2026:** the build now emits a
+`sitemap.xml` listing all 27 real pages, so a crawler can find the orphans even
+though nothing links to them. That fixes discoverability only. A page reachable
+solely from a sitemap still cannot be found by a visitor, and internal links
+are a ranking signal the orphans still have none of, so the nav work below
+stands.
+
 - [ ] Fix navigation in Webflow and re-export. 647 internal links currently point
       at `index.html`; 25 pages (all of `product/` and `solutions/`, the `company/`
       blog pages, `search.html`) are orphaned — reachable by URL but linked from
