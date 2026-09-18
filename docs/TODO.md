@@ -1,55 +1,56 @@
 # TODO
 
-## Attach the custom domains — blocked on one DNS step
+## Custom domains — done (18 September 2026)
 
-**The site went public on 14 September 2026.** The password gate is off
-(`SITE_PUBLIC` in `wrangler.jsonc`) and the site serves to anyone at
-`https://nfc-lab.dry-sky-b32b.workers.dev`.
+**The site is live on its real domains.** `nfclab.co` serves it;
+`www.nfclab.co`, `nfclab.com` and `www.nfclab.com` 301 to it with path and
+query intact. TLS verifies on all four. The password gate is off
+(`SITE_PUBLIC` in `wrangler.jsonc`), so this is the public site now —
+**nfclab.com no longer serves Webflow.**
+
+Attaching them needed the existing DNS records deleted by hand first: the
+dashboard's "leave empty for root domain" hint submits an invalid `.nfclab.com`
+and the API refuses to write over externally managed records, whatever
+`override_existing_dns_record` says. The MX, SPF and site-verification records
+were left alone and verified intact afterwards.
+
+- [ ] **Remove the `proxy-ssl.webflow.com` TXT record on `nfclab.com`.** It was
+      Webflow's domain verification and is now dead weight. Harmless, but it is
+      the last DNS trace of the old host.
+
+The section below is what it looked like while this was still outstanding, kept
+for the DNS detail.
+
+### Original notes
 
 Current setup: Cloudflare Worker `nfc-lab` on the `thelabgroup` account, static
 assets from `dist/`, deployed with `npm run deploy`. Moved off Railway on the
 same date — see
 [Hosting moved to Cloudflare](#hosting-moved-to-cloudflare-14-september-2026).
 
-The four hostnames are declared in `wrangler.jsonc` and the redirect logic is
-written and tested, but **the custom domains are not attached yet**: Cloudflare
-refuses to create a Workers custom domain over a hostname that already has
-externally managed DNS records, and all four have them.
+What was replaced, for the record — each of these had to be deleted by hand in
+the Cloudflare DNS tab before the custom domain would attach:
 
-- [ ] **Clear or replace the existing DNS records**, then `npm run deploy`.
-      Either delete them in the Cloudflare dashboard and redeploy, or use the
-      Worker's own **Add Custom Domain** flow, which offers to replace the
-      record for you. What is there now:
+| Hostname | Old record | Pointed at |
+| --- | --- | --- |
+| `nfclab.co` | A 13.248.243.5, A 76.223.105.230 | GoDaddy Websites + Marketing (Duda) |
+| `www.nfclab.co` | CNAME nfclab.co | the same |
+| `nfclab.com` | A 198.202.211.1 | redirected to www |
+| `www.nfclab.com` | CNAME cdn.webflow.com | **the Webflow site** |
 
-      | Hostname | Record | Points at |
-      | --- | --- | --- |
-      | `nfclab.co` | A 13.248.243.5, A 76.223.105.230 | GoDaddy Websites + Marketing (Duda) |
-      | `www.nfclab.co` | CNAME nfclab.co | the same |
-      | `nfclab.com` | A 198.202.211.1 | redirects to www |
-      | `www.nfclab.com` | CNAME cdn.webflow.com | **the live Webflow site** |
+Two things that cost time and will again if another domain is ever added:
 
-      Replacing `www.nfclab.com` is what takes the current public site off
-      Webflow and puts this export in its place.
+- The wrangler login only carries `zone:read`, so `npm run deploy` cannot do
+  this part. It fails with `code: 100117` and the rest of the deploy still
+  succeeds, so the error is easy to skim past.
+- Wrangler sets `override_existing_dns_record` automatically when stdout is not
+  a TTY, so a non-interactive deploy *looks* like it should replace the records
+  and does not. The flag is not the blocker; the credential is.
 
-- [ ] After attaching, confirm each hostname: `nfclab.co` serves, the other
-      three 301 to it with the path intact, and TLS is valid on all four.
-
-Note the wrangler login only carries `zone:read`, so it cannot edit DNS — this
-step needs the dashboard or an API token with `Zone.DNS:Edit`.
-
-**One TODO this closes.** The question further down about whether `nfclab.co`'s
-GoDaddy-issued certificate still renews (expires 17 March 2027) goes away once
-Cloudflare serves the hostname: Cloudflare issues and renews the certificate
+**One TODO this closed.** The question below about whether `nfclab.co`'s
+GoDaddy-issued certificate still renews (expires 17 March 2027) is moot:
+Cloudflare serves the hostname now and issues and renews the certificate
 itself.
-
-**Why it matters**
-- SEO: `*.workers.dev` is on the Public Suffix List, so it accrues no domain
-  authority and is treated as a separate site from anything else we own.
-- The export already references `nfclab.co` 16 times; canonical tags and OG URLs
-  point at the real domain, so shares/crawlers resolve away from the generated URL.
-- Trust: a `workers.dev` subdomain on a payments-adjacent marketing site reads as staging.
-- Portability: every inbound link to the generated subdomain breaks the day the
-  Worker is renamed or moved.
 
 **This was written as a blocker and has been overtaken.** It said: do NOT
 attach the domain until the navigation is fixed, or Google will index a broken
@@ -266,11 +267,12 @@ from GoDaddy DNS to Cloudflare. The AWS account was emptied and **closed**.
       (TTL 3600); once that has aged out they are dead weight. GoDaddy's old
       zones can be deleted at the same time — with AWS gone there is nothing left
       to roll back to.
-- [ ] **Before February 2027** — find out whether `nfclab.co`'s GoDaddy-issued
-      certificate still renews now that DNS is hosted at Cloudflare. It expires
-      17 March 2027, and the site is GoDaddy Websites + Marketing (Duda), so
-      GoDaddy owns the TLS. If it will not renew, put the domain behind
-      Cloudflare's proxy so Cloudflare owns the certificate instead.
+- [x] ~~**Before February 2027** — find out whether `nfclab.co`'s GoDaddy-issued
+      certificate still renews now that DNS is hosted at Cloudflare.~~ **Moot as
+      of 18 September 2026.** `nfclab.co` is a Cloudflare Workers custom domain
+      now, so Cloudflare issues and renews the certificate. The Duda site it
+      used to point at is no longer served there — worth remembering if anyone
+      goes looking for it.
 - [ ] **Every year** — keep `nfclab.net` registered. The apex is encoded into
       every physical tag. If it lapses and someone else registers it, they
       receive every scan from every tag.
