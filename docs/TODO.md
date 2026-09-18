@@ -165,7 +165,7 @@ times are editorial placeholders**.
       work above. The durable fix belongs in Webflow (populate the CMS / fix the
       nav there); until then, re-apply after every re-export.
 
-## Finish wiring up the forms handler
+## The forms work — done (18 September 2026)
 
 Every form on the site posts to `/api/forms/<name>`, taken over from Webflow's
 dead form endpoint by `js/forms.js`. **The separate service this used to need is
@@ -173,21 +173,28 @@ gone** — the handler moved into the site's own Worker on 14 September 2026, so
 `/api/*` is live wherever the site is, with no second deploy to create and no
 private-network hop. See the [Forms section of the README](../README.md#forms).
 
-**Blocked on** — until the Resend key is set, every submission is logged but no
-email is sent, and the visitor is told to email `hello@thelabgroup.com`
-directly:
-- [ ] Set `RESEND_API_KEY` and `FORM_FROM_EMAIL` (must be on a domain verified
-      in Resend) on the `nfc-lab` Worker:
-      `npx wrangler secret put RESEND_API_KEY`. Optional: `FORM_TO_EMAIL`
-      (defaults to `hello@thelabgroup.com`), `FORM_WEBHOOK_URL`,
-      `ALLOWED_ORIGINS`. Full table in the README.
-- [ ] Confirm with `GET /api/health` that `emailConfigured` has flipped to
-      `true`.
+`RESEND_API_KEY` and `FORM_FROM_EMAIL` are set on the `nfc-lab` Worker,
+`GET /api/health` reports `emailConfigured: true`, and all three forms were
+submitted against production with the emails confirmed as arriving: contact
+(`support/contact-2`), pricing quote (`pricing/pricing-1`), site plan
+(`pricing/pricing`). Validation was checked at the same time — an incomplete
+submission still returns `422` naming the missing fields rather than a
+misleading success.
 
-**Verify before trusting it**
-- [ ] Submit each of the three live forms in production and confirm the email
-      arrives: contact (`support/contact-2`), pricing quote (`pricing/pricing-1`),
-      site plan (`pricing/pricing`).
+This had been open since before the site was self-hosted at all: the forms were
+dead on arrival in the export, because Webflow's bundled JS posts to an endpoint
+that only accepts submissions from Webflow-hosted domains. They now work off
+Webflow for the first time.
+
+Optional and still unset: `FORM_TO_EMAIL` (defaults to `hello@thelabgroup.com`),
+`FORM_WEBHOOK_URL`, `ALLOWED_ORIGINS`. Full table in the README.
+
+- [ ] **Delete the three test submissions** from the inbox — they are labelled
+      `TEST` / `Ignore - automated delivery test`.
+- [ ] **Watch for spam now the forms are public and delivering.** The only
+      defences are the honeypot and the sub-1.5s fill check, both trivial for a
+      determined bot, plus the per-IP rate limits. Turnstile in front of
+      `/api/forms/*` is the next step if junk starts arriving.
 
 ## Hosting moved to Cloudflare (14 September 2026)
 
